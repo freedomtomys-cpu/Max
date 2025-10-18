@@ -5,3 +5,4 @@ nest-asyncio>=1.6.0
 python-telegram-bot>=22.5
 yookassa>=3.7.1
 yt-dlp>=2025.9.26
+gunicorn
