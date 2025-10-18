@@ -1,7 +1,0 @@
-aiosqlite>=0.21.0
-Flask>=3.1.2
-httpx>=0.28.1
-nest-asyncio>=1.6.0
-python-telegram-bot>=22.5
-yookassa>=3.7.1
-yt-dlp>=2025.9.26
