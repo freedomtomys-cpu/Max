@@ -8,29 +8,28 @@ import json
 
 nest_asyncio.apply()
 
-# Инициализация Flask
+# Flask-приложение
 app = Flask(__name__)
 
-# Импорты твоего бота и конфигов
+# Импорты бота
 from config import TELEGRAM_TOKEN
 import database as db
 from bot import start, button_handler, handle_message, callback_handler, admin_command, show_admin_panel
 
-# Создаем глобальный event loop для Scalingo
+# Создаём глобальный event loop
 loop = asyncio.get_event_loop()
 
-# Создаем Telegram Application, но без run_until_complete на старте
+# Telegram Application
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Инициализация базы и бота в отдельной задаче, чтобы Flask стартовал сразу
+# Инициализация базы и бота в фоне, чтобы Flask стартовал мгновенно
 async def init_bot():
     await db.init_db()
     await application.initialize()
 
-# Запускаем инициализацию в фоне
 loop.create_task(init_bot())
 
-# Добавляем обработчики
+# Обработчики команд и сообщений
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("admin", admin_command))
 application.add_handler(MessageHandler(filters.Regex(
@@ -39,7 +38,7 @@ application.add_handler(MessageHandler(filters.Regex(
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(CallbackQueryHandler(callback_handler))
 
-# Основной маршрут
+# Главная страница
 @app.route('/')
 def index():
     return 'MaxSaver Bot is running on Scalingo!'
@@ -50,16 +49,16 @@ def webhook():
     json_str = request.get_data().decode('UTF-8')
     json_data = json.loads(json_str)
     update = Update.de_json(json_data, application.bot)
-    # Используем глобальный loop вместо asyncio.run()
     loop.create_task(application.process_update(update))
     return 'OK'
 
-# Доп. маршрут для проверки
+# Проверка работы
 @app.route('/ping')
 def ping():
     return {'status': 'ok', 'message': 'Bot is alive'}, 200
 
-# Точка входа для локального теста
+# Локальный запуск для теста
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
