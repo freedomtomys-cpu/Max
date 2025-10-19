@@ -4,6 +4,6 @@ httpx>=0.28.1
 nest-asyncio>=1.6.0
 python-telegram-bot>=22.5
 yookassa>=3.7.1
-yt-dlp>=2025.9.26
+yt-dlp>=2025.9.23
 gunicorn>=21.2.0
 requests>=2.31.0
