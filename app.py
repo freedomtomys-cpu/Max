@@ -53,7 +53,7 @@ def webhook():
     try:
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, application.bot)
-        loop.create_task(application.process_update(update))
+        asyncio.run(application.process_update(update))
         return 'OK', 200
     except Exception as e:
         print(f"Error processing update: {e}")
