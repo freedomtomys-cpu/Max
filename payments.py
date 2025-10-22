@@ -111,4 +111,4 @@ def check_payment_status(payment_id: str) -> Dict:
         return {"status": "error", "paid": False}
     except Exception as e:
         logger.exception("Ошибка при проверке платежа %s: %s", payment_id, e)
-        return {"status": "error", "paid": False"}
+        return {"status": "error", "paid": False}
