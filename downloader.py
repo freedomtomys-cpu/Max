@@ -10,7 +10,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 async def upload_to_fileio(filepath: str) -> Optional[str]:
-    """Загружает файл на file.io и возвращает ссылку для скачивания"""
     try:
         logger.info(f"Загрузка файла на file.io: {filepath}")
         
@@ -33,7 +32,6 @@ async def upload_to_fileio(filepath: str) -> Optional[str]:
         return None
 
 async def extract_tiktok_info_api(url: str) -> Optional[Dict]:
-    """Извлекает информацию о TikTok видео через API"""
     try:
         logger.info(f"Extracting TikTok info via API: {url}")
         
@@ -88,12 +86,28 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
         return await extract_tiktok_info_api(url)
     
     try:
+        # Улучшенные настройки для Pinterest
         ydl_opts = {
             'quiet': False,
             'no_warnings': False,
             'extract_flat': False,
             'socket_timeout': 30,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'referer': 'https://www.pinterest.com/',
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+            },
+            # Игнорируем SSL ошибки для Pinterest
+            'nocheckcertificate': True,
         }
         
         logger.info(f"Extracting info for {platform} video: {url}")
@@ -105,12 +119,18 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, extract_sync)
         
+        if not info:
+            logger.error("No info extracted from Pinterest URL")
+            return None
+        
         formats_list = []
         if info.get('formats'):
             seen_heights = set()
             for f in info['formats']:
                 height = f.get('height')
-                if height and height not in seen_heights and f.get('vcodec') != 'none':
+                vcodec = f.get('vcodec', 'none')
+                # Берем только видео форматы (не только аудио)
+                if height and height not in seen_heights and vcodec != 'none':
                     quality = f"{height}p"
                     formats_list.append({
                         'quality': quality,
@@ -121,10 +141,19 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
             
             formats_list.sort(key=lambda x: x['height'])
         
-        thumbnail = info.get('thumbnail', '')
-        title = info.get('title', 'Без названия')
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: если форматов нет, добавляем "best"
+        if not formats_list:
+            logger.warning("No video formats found, adding fallback 'best' format")
+            formats_list.append({
+                'quality': 'best',
+                'format_id': 'best',
+                'height': 720
+            })
         
-        logger.info(f"Successfully extracted info: {title}")
+        thumbnail = info.get('thumbnail', '')
+        title = info.get('title', 'Pinterest Video')
+        
+        logger.info(f"Successfully extracted info: {title} with {len(formats_list)} formats")
         
         return {
             'title': title,
@@ -150,7 +179,6 @@ def extract_urls(text: str) -> List[str]:
     return [url for url in urls if is_valid_url(url)]
 
 async def download_tiktok_via_api(url: str, quality: Optional[str] = None, audio_only: bool = False) -> Optional[str]:
-    """Скачивает TikTok видео через API с поддержкой выбора качества"""
     try:
         logger.info(f"Downloading TikTok via API: {url}, quality={quality}, audio_only={audio_only}")
         
@@ -223,6 +251,17 @@ async def download_tiktok_via_api(url: str, quality: Optional[str] = None, audio
         return None
 
 async def download_video(url: str, quality: Optional[str] = None, audio_only: bool = False) -> Optional[str]:
+    """
+    Скачивает видео с TikTok или Pinterest
+    
+    Args:
+        url: URL видео
+        quality: качество (например '720p', 'best')
+        audio_only: скачивать только аудио
+    
+    Returns:
+        Путь к скачанному файлу или None при ошибке
+    """
     try:
         platform = 'pinterest' if 'pinterest.com' in url or 'pin.it' in url else 'tiktok'
         
@@ -231,13 +270,28 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
         if platform == 'tiktok':
             return await download_tiktok_via_api(url, quality, audio_only)
         
+        # Улучшенные настройки для Pinterest
         base_opts = {
             'quiet': False,
             'no_warnings': False,
             'socket_timeout': 30,
-            'retries': 3,
-            'fragment_retries': 3,
+            'retries': 5,
+            'fragment_retries': 5,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'referer': 'https://www.pinterest.com/',
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+            },
+            'nocheckcertificate': True,
         }
         
         if audio_only:
@@ -252,19 +306,20 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
                 }],
             }
         else:
-            if quality:
+            if quality and quality != 'best':
                 height = quality.replace('p', '')
                 ydl_opts = {
                     **base_opts,
-                    'format': f'bestvideo[height<={height}]+bestaudio/best[height<={height}]',
+                    'format': f'bestvideo[height<={height}]+bestaudio/best[height<={height}]/best',
                     'outtmpl': 'downloads/%(id)s.%(ext)s',
                     'merge_output_format': 'mp4',
                 }
             else:
                 ydl_opts = {
                     **base_opts,
-                    'format': 'best',
+                    'format': 'bestvideo+bestaudio/best',
                     'outtmpl': 'downloads/%(id)s.%(ext)s',
+                    'merge_output_format': 'mp4',
                 }
         
         os.makedirs('downloads', exist_ok=True)
@@ -272,22 +327,34 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
         def download_sync():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                if not info:
+                    logger.error("No info returned from yt-dlp during download")
+                    return None
+                    
                 filename = ydl.prepare_filename(info)
                 
                 if audio_only:
                     filename = filename.rsplit('.', 1)[0] + '.mp3'
+                elif not filename.endswith('.mp4'):
+                    base_filename = filename.rsplit('.', 1)[0]
+                    if os.path.exists(base_filename + '.mp4'):
+                        filename = base_filename + '.mp4'
                 
                 return filename
         
         loop = asyncio.get_event_loop()
         filename = await loop.run_in_executor(None, download_sync)
         
+        if not filename:
+            logger.error("Download function returned None")
+            return None
+        
         if filename and os.path.exists(filename):
             file_size = os.path.getsize(filename) / (1024 * 1024)
             logger.info(f"Successfully downloaded: {filename} ({file_size:.2f} MB)")
             return filename
         else:
-            logger.error(f"Download failed: file not found")
+            logger.error(f"Download failed: file not found at {filename}")
             return None
             
     except Exception as e:
