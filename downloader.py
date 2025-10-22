@@ -90,6 +90,7 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
             'no_warnings': True,
             'extract_flat': False,
             'socket_timeout': 30,
+            'ignoreerrors': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -107,43 +108,61 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
                     return ydl.extract_info(url, download=False)
             except Exception as e:
                 logger.error(f"Ошибка yt-dlp: {e}")
-                raise
+                return None
         
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, extract_sync)
         
         if not info:
-            logger.error("yt-dlp вернул None")
-            return None
+            logger.error("yt-dlp вернул None - возможно это изображение, а не видео")
+            return {
+                'title': 'Pinterest контент',
+                'duration': 0,
+                'thumbnail': '',
+                'platform': platform,
+                'formats': [{'quality': 'image', 'format_id': 'image', 'height': 0}],
+                'url': url,
+                'is_image': True
+            }
         
         formats_list = []
+        has_video = False
+        
         if info.get('formats'):
             seen_heights = set()
             for f in info['formats']:
-                height = f.get('height')
-                if height and height not in seen_heights and f.get('vcodec') != 'none':
-                    quality = f"{height}p"
-                    formats_list.append({
-                        'quality': quality,
-                        'format_id': f['format_id'],
-                        'height': height
-                    })
-                    seen_heights.add(height)
+                if f.get('vcodec') != 'none':
+                    has_video = True
+                    height = f.get('height')
+                    if height and height not in seen_heights:
+                        quality = f"{height}p"
+                        formats_list.append({
+                            'quality': quality,
+                            'format_id': f['format_id'],
+                            'height': height
+                        })
+                        seen_heights.add(height)
             
-            formats_list.sort(key=lambda x: x['height'])
+            if formats_list:
+                formats_list.sort(key=lambda x: x['height'])
         
-        if not formats_list:
-            logger.warning("Не найдены форматы видео, используем best")
-            formats_list.append({
-                'quality': 'best',
-                'format_id': 'best',
-                'height': 720
-            })
+        if not has_video or not formats_list:
+            logger.warning("Не найдено видео - это изображение")
+            thumbnail = info.get('thumbnail', '')
+            return {
+                'title': info.get('title', 'Pinterest изображение'),
+                'duration': 0,
+                'thumbnail': thumbnail,
+                'platform': platform,
+                'formats': [{'quality': 'image', 'format_id': 'image', 'height': 0}],
+                'url': url,
+                'is_image': True
+            }
         
         thumbnail = info.get('thumbnail', '')
         title = info.get('title', 'Без названия')
         
-        logger.info(f"✅ Pinterest информация извлечена: {title}")
+        logger.info(f"✅ Pinterest видео найдено: {title}")
         logger.info(f"Доступные форматы: {[f['quality'] for f in formats_list]}")
         
         return {
@@ -152,11 +171,11 @@ async def extract_video_info_async(url: str) -> Optional[Dict]:
             'thumbnail': thumbnail,
             'platform': platform,
             'formats': formats_list,
-            'url': url
+            'url': url,
+            'is_image': False
         }
     except Exception as e:
-        logger.error(f"❌ Ошибка извлечения видео из {url}: {str(e)}", exc_info=True)
-        logger.error(f"Тип ошибки: {type(e).__name__}")
+        logger.error(f"❌ Ошибка извлечения из {url}: {str(e)}", exc_info=True)
         return None
 
 def is_valid_url(url: str) -> bool:
@@ -242,6 +261,51 @@ async def download_tiktok_via_api(url: str, quality: Optional[str] = None, audio
         logger.error(f"❌ Ошибка скачивания TikTok: {str(e)}", exc_info=True)
         return None
 
+async def download_pinterest_image(url: str) -> Optional[str]:
+    try:
+        logger.info(f"Скачивание Pinterest изображения: {url}")
+        
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'best',
+            'outtmpl': 'downloads/%(id)s.%(ext)s',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }
+        
+        os.makedirs('downloads', exist_ok=True)
+        
+        def download_sync():
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info and info.get('thumbnail'):
+                        thumbnail_url = info['thumbnail']
+                        return thumbnail_url
+            except:
+                pass
+            return None
+        
+        loop = asyncio.get_event_loop()
+        thumbnail_url = await loop.run_in_executor(None, download_sync)
+        
+        if thumbnail_url:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(thumbnail_url)
+                if response.status_code == 200:
+                    import hashlib
+                    filename = f"downloads/{hashlib.md5(url.encode()).hexdigest()}.jpg"
+                    with open(filename, 'wb') as f:
+                        f.write(response.content)
+                    logger.info(f"✅ Изображение скачано: {filename}")
+                    return filename
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка скачивания изображения: {str(e)}", exc_info=True)
+        return None
+
 async def download_video(url: str, quality: Optional[str] = None, audio_only: bool = False) -> Optional[str]:
     try:
         platform = 'pinterest' if 'pinterest.com' in url or 'pin.it' in url else 'tiktok'
@@ -251,12 +315,16 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
         if platform == 'tiktok':
             return await download_tiktok_via_api(url, quality, audio_only)
         
+        if quality == 'image':
+            return await download_pinterest_image(url)
+        
         base_opts = {
             'quiet': True,
             'no_warnings': True,
             'socket_timeout': 30,
             'retries': 3,
             'fragment_retries': 3,
+            'ignoreerrors': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -299,6 +367,8 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
+                    if not info:
+                        return None
                     filename = ydl.prepare_filename(info)
                     
                     if audio_only:
@@ -307,7 +377,7 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
                     return filename
             except Exception as e:
                 logger.error(f"Ошибка yt-dlp при скачивании: {e}")
-                raise
+                return None
         
         loop = asyncio.get_event_loop()
         filename = await loop.run_in_executor(None, download_sync)
@@ -321,7 +391,7 @@ async def download_video(url: str, quality: Optional[str] = None, audio_only: bo
             return None
             
     except Exception as e:
-        logger.error(f"❌ Ошибка скачивания видео из {url}: {str(e)}", exc_info=True)
+        logger.error(f"❌ Ошибка скачивания из {url}: {str(e)}", exc_info=True)
         logger.error(f"Тип ошибки: {type(e).__name__}")
         return None
 
