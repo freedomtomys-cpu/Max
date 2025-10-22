@@ -18,7 +18,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def escape_markdown(text: str) -> str:
-    """Escape special characters for Telegram MarkdownV2"""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
@@ -476,7 +475,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user.id
             )
             
-            if payment_info:
+            if payment_info and isinstance(payment_info, dict):
                 await db.create_payment(user.id, package_key, package['price'], payment_info['id'])
                 
                 keyboard = [
@@ -492,13 +491,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
             else:
-                await query.edit_message_text("Ошибка создания платежа. Попробуйте позже.")
+                logger.error(f"Payment creation failed for user {user.id}, package {package_key}")
+                await query.edit_message_text(
+                    "❌ *Ошибка создания платежа*\n\n"
+                    "К сожалению, не удалось создать платеж.\n"
+                    "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
     
     elif data.startswith('check_'):
         payment_id = data.replace('check_', '')
         payment_info = payments.check_payment_status(payment_id)
-        status = payment_info['status']
-        paid = payment_info['paid']
+        
+        if not payment_info or not isinstance(payment_info, dict):
+            await query.edit_message_text(
+                "⚠️ *Ошибка проверки платежа*\n\n"
+                "Не удалось проверить статус платежа.\n"
+                "Попробуйте позже.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        status = payment_info.get('status', 'error')
+        paid = payment_info.get('paid', False)
         
         await query.answer()
         
@@ -622,11 +637,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename = await downloader.download_video(url, quality, audio_only)
                 
                 if filename and os.path.exists(filename):
-                    # Проверка размера файла
                     file_size_mb = os.path.getsize(filename) / (1024 * 1024)
                     logger.info(f"Downloaded file size: {file_size_mb:.2f} MB")
                     
-                    # Для очень больших файлов (>2GB) - технический лимит
                     if file_size_mb > 2000:
                         os.remove(filename)
                         await loading_msg.edit_text(
@@ -655,10 +668,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                             logger.info("Аудио файл успешно отправлен")
                         elif file_size_mb > 50:
-                            # Большие видео отправляем как документ (лимит 2GB вместо 50MB)
                             logger.info(f"Отправка большого видео как документ ({file_size_mb:.1f} MB)...")
                             
-                            # Для очень больших файлов показываем прогресс
                             if file_size_mb > 500:
                                 await loading_msg.edit_text(
                                     f"📤 *Отправка файла ({file_size_mb:.1f} MB)*\n\n"
@@ -667,7 +678,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     parse_mode=ParseMode.MARKDOWN
                                 )
                             
-                            # Отправляем файл по пути для больших размеров (не загружаем в память)
                             await query.message.reply_document(
                                 document=open(filename, 'rb'),
                                 caption=f"✅ *Готово!*\n\n🎬 Видео ({file_size_mb:.1f} MB)\n\n📦 Отправлено как документ из-за большого размера\nВидео можно смотреть прямо в Telegram!\n\nСпасибо, что пользуешься ⚡*MaxSaver*",
@@ -679,7 +689,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                             logger.info("Документ успешно отправлен")
                         else:
-                            # Маленькие видео отправляем как видео
                             logger.info("Отправка видео...")
                             with open(filename, 'rb') as video_file:
                                 await query.message.reply_video(
@@ -721,7 +730,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     asyncio.create_task(delete_message_later(context, query.message.chat_id, loading_msg.message_id, 30))
             except Exception as e:
-                print(f"Download error: {e}")
+                logger.error(f"Download error: {e}", exc_info=True)
                 await loading_msg.edit_text(
                     "🚫 *Ошибка при загрузке*\n\n"
                     "Возможные причины:\n"
