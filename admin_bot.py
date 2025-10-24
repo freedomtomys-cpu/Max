@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ParseMode
 import logging
 from datetime import datetime, timedelta
+from typing import Optional
 import random
 import string
 import aiosqlite
@@ -409,3 +410,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
