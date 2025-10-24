@@ -22,11 +22,16 @@ print("ЗАГРУЗКА КОНФИГУРАЦИИ...")
 print("=" * 50)
 
 TELEGRAM_TOKEN = get_env_var('TELEGRAM_TOKEN', required=True)
+ADMIN_BOT_TOKEN = get_env_var('ADMIN_BOT_TOKEN', required=True)
 YOOKASSA_SECRET_KEY = get_env_var('YOOKASSA_SECRET_KEY', required=True)
 YOOKASSA_SHOP_ID = get_env_var('YOOKASSA_SHOP_ID', required=True)
 BOT_USERNAME = get_env_var('BOT_USERNAME', default='MaxSaverBot')
 
 ADMIN_IDS = [6696647030, 1459753369]
+
+ADMIN_BOT_PASSWORD_1 = "p4ak862"
+ADMIN_BOT_PASSWORD_2 = "nossp5gr"
+ADMIN_BOT_ID = 1459753369
 
 FREE_DOWNLOAD_LIMIT = 55
 
@@ -35,39 +40,50 @@ PACKAGES = {
         'name': 'Full',
         'price': 149,
         'duration_days': 30,
-        'features': ['4k', 'unlimited', 'mass_download']
+        'features': ['4k', 'unlimited', 'mass_download'],
+        'coins': 2600
     },
     'full_plus': {
         'name': 'Full+',
         'price': 1099,
         'duration_days': 365,
-        'features': ['4k', 'unlimited', 'mass_download']
+        'features': ['4k', 'unlimited', 'mass_download'],
+        'coins': 17599
     },
     '4k_unlimited': {
         'name': '4K + Безлимит',
         'price': 99,
         'duration_days': 30,
-        'features': ['4k', 'unlimited']
+        'features': ['4k', 'unlimited'],
+        'coins': 1800
     },
     'mass_download': {
         'name': 'Массовая загрузка',
         'price': 75,
         'duration_days': 30,
-        'features': ['mass_download']
+        'features': ['mass_download'],
+        'coins': 360
     },
     'unlimited': {
         'name': 'Безлимит',
         'price': 75,
         'duration_days': 30,
-        'features': ['unlimited']
+        'features': ['unlimited'],
+        'coins': 360
     },
     '4k': {
         'name': '4K',
         'price': 75,
         'duration_days': 30,
-        'features': ['4k']
+        'features': ['4k'],
+        'coins': 360
     }
 }
+
+REFERRAL_BONUS_PER_USER = 20
+REFERRAL_BONUS_DOWNLOAD = 1
+REFERRAL_BONUS_FROM_REFERRAL = 0.5
+REFERRAL_BONUS_NEW_USER = 10
 
 print("=" * 50)
 print("✅ КОНФИГУРАЦИЯ УСПЕШНО ЗАГРУЖЕНА")
