@@ -72,7 +72,8 @@ async def extract_tiktok_info_api(url: str) -> Optional[Dict]:
                 'platform': 'tiktok',
                 'formats': formats_list,
                 'url': url,
-                'api_data': video_data
+                'api_data': video_data,
+                'is_image': False
             }
     except Exception as e:
         logger.error(f"❌ Ошибка извлечения TikTok информации: {str(e)}", exc_info=True)
@@ -280,8 +281,7 @@ async def download_pinterest_image(url: str) -> Optional[str]:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if info and info.get('thumbnail'):
-                        thumbnail_url = info['thumbnail']
-                        return thumbnail_url
+                        return info['thumbnail']
             except:
                 pass
             return None
@@ -409,3 +409,4 @@ def format_duration(seconds) -> str:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     else:
         return f"{minutes}:{secs:02d}"
+
