@@ -13,6 +13,7 @@ app = Flask(__name__)
 
 from config import TELEGRAM_TOKEN
 import database as db
+import referral_system as ref
 from bot import (
     start, button_handler, handle_message, callback_handler, 
     admin_command, show_admin_panel
@@ -26,6 +27,7 @@ loop = asyncio.get_event_loop()
 
 # Инициализация базы и бота
 loop.run_until_complete(db.init_db())
+loop.run_until_complete(ref.init_referral_tables())
 loop.run_until_complete(application.initialize())
 
 # Регистрируем хэндлеры
