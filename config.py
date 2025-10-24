@@ -1,37 +1,23 @@
 import os
-import sys
 
-def get_env_var(name, default='', required=False):
-    value = os.getenv(name, default)
-    
-    if required and not value:
-        error_msg = f"❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная окружения {name} не установлена!"
-        print(error_msg, file=sys.stderr)
-        print(f"Проверьте настройки в Render.com -> Environment Variables", file=sys.stderr)
-        raise ValueError(error_msg)
-    
-    if value:
-        print(f"✅ {name} успешно загружена (длина: {len(value)} символов)")
-    else:
-        print(f"⚠️ {name} не установлена, используется значение по умолчанию")
-    
-    return value
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
+YOOKASSA_SECRET_KEY = os.getenv('YOOKASSA_SECRET_KEY', '')
+YOOKASSA_SHOP_ID = os.getenv('YOOKASSA_SHOP_ID', '')
+BOT_USERNAME = os.getenv('BOT_USERNAME', 'MaxSaverBot')
 
-print("=" * 50)
-print("ЗАГРУЗКА КОНФИГУРАЦИИ...")
-print("=" * 50)
+ADMIN_BOT_TOKEN = os.getenv('ADMIN_BOT_TOKEN', '')
+ADMIN_BOT_PASSWORD_1 = os.getenv('ADMIN_BOT_PASSWORD_1', 'password1')
+ADMIN_BOT_PASSWORD_2 = os.getenv('ADMIN_BOT_PASSWORD_2', 'password2')
+ADMIN_BOT_ID = int(os.getenv('ADMIN_BOT_ID', '1459753369'))
 
-TELEGRAM_TOKEN = get_env_var('TELEGRAM_TOKEN', required=True)
-ADMIN_BOT_TOKEN = get_env_var('ADMIN_BOT_TOKEN', required=True)
-YOOKASSA_SECRET_KEY = get_env_var('YOOKASSA_SECRET_KEY', required=True)
-YOOKASSA_SHOP_ID = get_env_var('YOOKASSA_SHOP_ID', required=True)
-BOT_USERNAME = get_env_var('BOT_USERNAME', default='MaxSaverBot')
+if not TELEGRAM_TOKEN:
+    raise ValueError("TELEGRAM_TOKEN environment variable is required")
+if not YOOKASSA_SECRET_KEY:
+    raise ValueError("YOOKASSA_SECRET_KEY environment variable is required")
+if not YOOKASSA_SHOP_ID:
+    raise ValueError("YOOKASSA_SHOP_ID environment variable is required")
 
 ADMIN_IDS = [6696647030, 1459753369]
-
-ADMIN_BOT_PASSWORD_1 = "p4ak862"
-ADMIN_BOT_PASSWORD_2 = "nossp5gr"
-ADMIN_BOT_ID = 1459753369
 
 FREE_DOWNLOAD_LIMIT = 55
 
@@ -40,51 +26,36 @@ PACKAGES = {
         'name': 'Full',
         'price': 149,
         'duration_days': 30,
-        'features': ['4k', 'unlimited', 'mass_download'],
-        'coins': 2600
+        'features': ['4k', 'unlimited', 'mass_download']
     },
     'full_plus': {
         'name': 'Full+',
         'price': 1099,
         'duration_days': 365,
-        'features': ['4k', 'unlimited', 'mass_download'],
-        'coins': 17599
+        'features': ['4k', 'unlimited', 'mass_download']
     },
     '4k_unlimited': {
         'name': '4K + Безлимит',
         'price': 99,
         'duration_days': 30,
-        'features': ['4k', 'unlimited'],
-        'coins': 1800
+        'features': ['4k', 'unlimited']
     },
     'mass_download': {
         'name': 'Массовая загрузка',
         'price': 75,
         'duration_days': 30,
-        'features': ['mass_download'],
-        'coins': 360
+        'features': ['mass_download']
     },
     'unlimited': {
         'name': 'Безлимит',
         'price': 75,
         'duration_days': 30,
-        'features': ['unlimited'],
-        'coins': 360
+        'features': ['unlimited']
     },
     '4k': {
         'name': '4K',
         'price': 75,
         'duration_days': 30,
-        'features': ['4k'],
-        'coins': 360
+        'features': ['4k']
     }
 }
-
-REFERRAL_BONUS_PER_USER = 20
-REFERRAL_BONUS_DOWNLOAD = 1
-REFERRAL_BONUS_FROM_REFERRAL = 0.5
-REFERRAL_BONUS_NEW_USER = 10
-
-print("=" * 50)
-print("✅ КОНФИГУРАЦИЯ УСПЕШНО ЗАГРУЖЕНА")
-print("=" * 50)
