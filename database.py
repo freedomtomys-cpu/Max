@@ -67,6 +67,61 @@ async def init_db():
             )
         ''')
         
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS referrals (
+                user_id INTEGER PRIMARY KEY,
+                referral_code TEXT UNIQUE,
+                referred_by INTEGER,
+                coins_balance INTEGER DEFAULT 0,
+                total_earned_coins INTEGER DEFAULT 0,
+                total_referrals INTEGER DEFAULT 0,
+                total_spent_coins INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (referred_by) REFERENCES referrals (user_id)
+            )
+        ''')
+        
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS coin_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                amount REAL,
+                transaction_type TEXT,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES referrals (user_id)
+            )
+        ''')
+        
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS push_messages (
+                id TEXT PRIMARY KEY,
+                text TEXT,
+                lifetime INTEGER,
+                active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS sponsors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                link TEXT,
+                position INTEGER,
+                active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                admin_id INTEGER PRIMARY KEY,
+                session_active INTEGER DEFAULT 0,
+                last_active TIMESTAMP,
+                auth_step INTEGER DEFAULT 0
+            )
+        ''')
+        
         await db.execute('INSERT OR IGNORE INTO statistics (id) VALUES (1)')
         await db.commit()
 
@@ -115,10 +170,7 @@ async def get_active_features(user_id: int) -> List[str]:
             (user_id,)
         ) as cursor:
             rows = await cursor.fetchall()
-            features = []
-            for row in rows:
-                features.append(row[0])
-            return features
+            return [row[0] for row in rows]
 
 async def has_feature(user_id: int, feature: str) -> bool:
     features = await get_active_features(user_id)
@@ -133,22 +185,26 @@ async def get_user_subscriptions(user_id: int) -> List[Dict]:
             (user_id,)
         ) as cursor:
             rows = await cursor.fetchall()
-            subs = []
-            for row in rows:
-                subs.append({
-                    'feature': row[0],
-                    'expires_at': row[1]
-                })
-            return subs
+            return [{'feature': row[0], 'expires_at': row[1]} for row in rows]
 
 async def add_subscription(user_id: int, features: List[str], duration_days: int):
     async with aiosqlite.connect(DATABASE_FILE) as db:
         expires_at = datetime.now() + timedelta(days=duration_days)
         for feature in features:
-            await db.execute(
-                'INSERT INTO subscriptions (user_id, feature, expires_at) VALUES (?, ?, ?)',
-                (user_id, feature, expires_at)
+            existing = await db.execute_fetchall(
+                'SELECT id FROM subscriptions WHERE user_id = ? AND feature = ? AND expires_at > datetime("now")',
+                (user_id, feature)
             )
+            if existing:
+                await db.execute(
+                    'UPDATE subscriptions SET expires_at = ? WHERE user_id = ? AND feature = ? AND expires_at > datetime("now")',
+                    (expires_at, user_id, feature)
+                )
+            else:
+                await db.execute(
+                    'INSERT INTO subscriptions (user_id, feature, expires_at) VALUES (?, ?, ?)',
+                    (user_id, feature, expires_at)
+                )
         await db.commit()
 
 async def create_payment(user_id: int, package_key: str, amount: float, payment_id: str):
@@ -194,9 +250,20 @@ async def get_statistics() -> Dict:
             'SELECT total_downloads, total_revenue FROM statistics WHERE id = 1'
         ) as cursor:
             row = await cursor.fetchone()
+            
+            async with db.execute('SELECT SUM(coins_balance) FROM referrals') as cursor2:
+                row2 = await cursor2.fetchone()
+                total_coins = row2[0] if row2 and row2[0] else 0
+            
+            async with db.execute('SELECT SUM(total_spent_coins) FROM referrals') as cursor3:
+                row3 = await cursor3.fetchone()
+                spent_coins = row3[0] if row3 and row3[0] else 0
+            
             return {
                 'total_downloads': row[0] if row else 0,
-                'total_revenue': row[1] if row else 0
+                'total_revenue': row[1] if row else 0,
+                'total_coins_in_circulation': total_coins,
+                'total_coins_spent': spent_coins
             }
 
 async def block_user(user_id: int):
@@ -295,3 +362,9 @@ async def get_active_subscriptions_count() -> int:
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
+
+async def get_all_user_ids() -> List[int]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute('SELECT user_id FROM users WHERE is_blocked = 0') as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
