@@ -9,7 +9,8 @@ from telegram.constants import ParseMode
 import database as db
 import downloader
 import payments
-from config import TELEGRAM_TOKEN, PACKAGES, FREE_DOWNLOAD_LIMIT, ADMIN_IDS
+import referral_system as ref
+from config import TELEGRAM_TOKEN, PACKAGES, FREE_DOWNLOAD_LIMIT, ADMIN_IDS, BOT_USERNAME
 import logging
 
 nest_asyncio.apply()
@@ -18,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def escape_markdown(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2"""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
@@ -31,6 +33,17 @@ async def delete_message_later(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.add_user(user.id, user.username)
+    
+    referred_by = None
+    if context.args and len(context.args) > 0:
+        ref_code = context.args[0]
+        if ref_code.startswith('ref'):
+            ref_code = ref_code[3:]
+            referrer_id = await ref.get_user_by_referral_code(ref_code)
+            if referrer_id and referrer_id != user.id:
+                referred_by = referrer_id
+    
+    await ref.create_referral_account(user.id, referred_by)
     
     if await db.is_user_blocked(user.id):
         return
@@ -50,13 +63,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
+    welcome_text = "⚡ *Привет! Я — MaxSaver* ⚡\n\n" \
+        "Скачиваю видео и изображения из *TikTok* и *Pinterest* без водяных знаков:\n" \
+        "✅ Быстро и качественно\n" \
+        "✅ Поддержка до 4K\n" \
+        "✅ Скачивание аудио в MP3\n\n" \
+        "📲 *Просто отправь ссылку* — и получишь готовый файл!"
+    
+    if referred_by:
+        welcome_text += "\n\n🎁 *Ты получил 10 монет* за регистрацию по реферальной ссылке!"
+    
     await update.message.reply_text(
-        "⚡ *Привет! Я — MaxSaver* ⚡\n\n"
-        "Скачиваю видео и изображения из *TikTok* и *Pinterest* без водяных знаков:\n"
-        "✅ Быстро и качественно\n"
-        "✅ Поддержка до 4K\n"
-        "✅ Скачивание аудио в MP3\n\n"
-        "📲 *Просто отправь ссылку* — и получишь готовый файл!",
+        welcome_text,
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN
     )
@@ -182,7 +200,10 @@ async def show_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "• Видео в качестве 4K\n"
         text += "• Массовую загрузку"
     
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    keyboard = [[InlineKeyboardButton("🎁 Реферальная программа", callback_data="referral_system")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -475,7 +496,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user.id
             )
             
-            if payment_info and isinstance(payment_info, dict):
+            if payment_info:
                 await db.create_payment(user.id, package_key, package['price'], payment_info['id'])
                 
                 keyboard = [
@@ -491,29 +512,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
             else:
-                logger.error(f"Payment creation failed for user {user.id}, package {package_key}")
-                await query.edit_message_text(
-                    "❌ *Ошибка создания платежа*\n\n"
-                    "К сожалению, не удалось создать платеж.\n"
-                    "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                await query.edit_message_text("Ошибка создания платежа. Попробуйте позже.")
     
     elif data.startswith('check_'):
         payment_id = data.replace('check_', '')
         payment_info = payments.check_payment_status(payment_id)
-        
-        if not payment_info or not isinstance(payment_info, dict):
-            await query.edit_message_text(
-                "⚠️ *Ошибка проверки платежа*\n\n"
-                "Не удалось проверить статус платежа.\n"
-                "Попробуйте позже.",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return
-        
-        status = payment_info.get('status', 'error')
-        paid = payment_info.get('paid', False)
+        status = payment_info['status']
+        paid = payment_info['paid']
         
         await query.answer()
         
@@ -573,6 +578,90 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == 'need_4k':
         await query.answer("⚠️ 4K доступно только для платных пользователей.\nПодключи пакет 💎4K или Full.", show_alert=True)
+    
+    elif data == 'referral_system':
+        ref_info = await ref.get_referral_info(user.id)
+        if ref_info:
+            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref{ref_info['referral_code']}"
+            
+            text = "🎁 *Приглашай и получай монеты!*\n\n"
+            text += "Делись своей ссылкой, зови друзей и открывай функции бесплатно.\n\n"
+            text += f"💰 Твой баланс: *{ref_info['coins_balance']}* монет\n"
+            text += f"👥 Всего приглашено: *{ref_info['total_referrals']}*\n"
+            text += f"💎 Всего заработано: *{ref_info['total_earned_coins']}* монет\n"
+            text += f"🎁 Заработано от рефералов: *{int(ref_info['earned_from_referrals'])}* монет\n"
+            text += f"🛒 Покупок на сумму: *{ref_info['total_spent_coins']}* монет\n\n"
+            text += f"📎 *Твоя ссылка:*\n`{ref_link}`\n\n"
+            text += "Выбери награду 👇"
+            
+            keyboard = [
+                [InlineKeyboardButton("📦 Полный пакет на год — 17599 монет", callback_data="ref_buy_full_year")],
+                [InlineKeyboardButton("📦 Полный пакет на месяц — 2600 монет", callback_data="ref_buy_full_month")],
+                [InlineKeyboardButton("💎 4K + Безлимит — 1800 монет", callback_data="ref_buy_4k_unlimited")],
+                [InlineKeyboardButton("📥 Массовая загрузка — 360 монет", callback_data="ref_buy_mass")],
+                [InlineKeyboardButton("ℹ️ Как приглашать друзей", callback_data="ref_how_to")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await query.answer("Ошибка: аккаунт не найден", show_alert=True)
+    
+    elif data == 'ref_how_to':
+        text = "📚 *Как приглашать друзей и зарабатывать монеты*\n\n"
+        text += "1️⃣ *PR GRAM*\n"
+        text += "Добавь свою ссылку на платформах вроде [PR GRAM](https://t.me/gram_piarbot?start=1459753369), где участники обмениваются подписками и входами в ботов.\n\n"
+        text += "2️⃣ *Друзья и знакомые*\n"
+        text += "Просто отправь ссылку тем, кто ещё не знает про бота. Например: «Смотри, этот бот скачивает видео из TikTok и Pinterest, попробуй по моей ссылке».\n\n"
+        text += "3️⃣ *Телеграм-чаты и группы*\n"
+        text += "Делись ссылкой в тематических чатах, где обсуждают видео, TikTok, Pinterest, загрузки и т.д.\n\n"
+        text += "4️⃣ *TikTok и соцсети*\n"
+        text += "Сними короткий ролик о том, как ты пользуешься ботом, добавь ссылку в описании или комментарии.\n\n"
+        text += "💰 *Бонусы и вознаграждения:*\n"
+        text += "• За приглашение нового пользователя — *+20 монет*\n"
+        text += "• За скачанное видео — *+1 монета*\n"
+        text += "• За скачанное видео другом — *+0.5 монеты*\n"
+        text += "• Приглашённому пользователю при старте — *+10 монет*"
+        
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="referral_system")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
+    
+    elif data.startswith('ref_buy_'):
+        ref_info = await ref.get_referral_info(user.id)
+        if not ref_info:
+            await query.answer("Ошибка: аккаунт не найден", show_alert=True)
+            return
+        
+        package_map = {
+            'ref_buy_full_year': {'name': 'Полный пакет на год', 'cost': 17599, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 365},
+            'ref_buy_full_month': {'name': 'Полный пакет на месяц', 'cost': 2600, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 30},
+            'ref_buy_4k_unlimited': {'name': '4K + Безлимит', 'cost': 1800, 'features': ['4k', 'unlimited'], 'days': 30},
+            'ref_buy_mass': {'name': 'Массовая загрузка', 'cost': 360, 'features': ['mass_download'], 'days': 30},
+        }
+        
+        package = package_map.get(data)
+        if not package:
+            await query.answer("Ошибка: пакет не найден", show_alert=True)
+            return
+        
+        if ref_info['coins_balance'] < package['cost']:
+            await query.answer(f"❌ Недостаточно монет! Нужно {package['cost']}, у вас {ref_info['coins_balance']}", show_alert=True)
+            return
+        
+        success = await ref.spend_coins(user.id, package['cost'], f"Покупка {package['name']}")
+        if success:
+            await db.add_subscription(user.id, package['features'], package['days'])
+            await query.answer(f"✅ {package['name']} активирован!", show_alert=True)
+            await query.edit_message_text(
+                f"🎉 *Поздравляем!*\n\n"
+                f"Ты успешно приобрел *{package['name']}* за {package['cost']} монет!\n\n"
+                f"Функция активирована и готова к использованию! ⚡",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await query.answer("❌ Ошибка при покупке. Попробуйте снова.", show_alert=True)
     
     elif data == 'show_packages':
         keyboard = [
@@ -637,9 +726,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename = await downloader.download_video(url, quality, audio_only)
                 
                 if filename and os.path.exists(filename):
+                    # Проверка размера файла
                     file_size_mb = os.path.getsize(filename) / (1024 * 1024)
                     logger.info(f"Downloaded file size: {file_size_mb:.2f} MB")
                     
+                    # Для очень больших файлов (>2GB) - технический лимит
                     if file_size_mb > 2000:
                         os.remove(filename)
                         await loading_msg.edit_text(
@@ -655,6 +746,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     platform = 'pinterest' if 'pinterest.com' in url or 'pin.it' in url else 'tiktok'
                     await db.add_download(user.id, platform)
                     
+                    await ref.process_download_coins(user.id)
+                    
                     try:
                         if audio_only:
                             logger.info("Отправка аудио файла...")
@@ -668,8 +761,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                             logger.info("Аудио файл успешно отправлен")
                         elif file_size_mb > 50:
+                            # Большие видео отправляем как документ (лимит 2GB вместо 50MB)
                             logger.info(f"Отправка большого видео как документ ({file_size_mb:.1f} MB)...")
                             
+                            # Для очень больших файлов показываем прогресс
                             if file_size_mb > 500:
                                 await loading_msg.edit_text(
                                     f"📤 *Отправка файла ({file_size_mb:.1f} MB)*\n\n"
@@ -678,6 +773,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     parse_mode=ParseMode.MARKDOWN
                                 )
                             
+                            # Отправляем файл по пути для больших размеров (не загружаем в память)
                             await query.message.reply_document(
                                 document=open(filename, 'rb'),
                                 caption=f"✅ *Готово!*\n\n🎬 Видео ({file_size_mb:.1f} MB)\n\n📦 Отправлено как документ из-за большого размера\nВидео можно смотреть прямо в Telegram!\n\nСпасибо, что пользуешься ⚡*MaxSaver*",
@@ -689,6 +785,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                             logger.info("Документ успешно отправлен")
                         else:
+                            # Маленькие видео отправляем как видео
                             logger.info("Отправка видео...")
                             with open(filename, 'rb') as video_file:
                                 await query.message.reply_video(
@@ -730,7 +827,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     asyncio.create_task(delete_message_later(context, query.message.chat_id, loading_msg.message_id, 30))
             except Exception as e:
-                logger.error(f"Download error: {e}", exc_info=True)
+                print(f"Download error: {e}")
                 await loading_msg.edit_text(
                     "🚫 *Ошибка при загрузке*\n\n"
                     "Возможные причины:\n"
@@ -967,3 +1064,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
