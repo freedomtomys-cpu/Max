@@ -96,6 +96,17 @@ async def init_db():
             )
         ''')
         
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS push_recipients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                push_id TEXT,
+                user_id INTEGER,
+                message_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (push_id) REFERENCES push_messages (id)
+            )
+        ''')
+        
         await db.execute('INSERT OR IGNORE INTO statistics (id) VALUES (1)')
         await db.commit()
 
@@ -330,3 +341,134 @@ async def get_all_user_ids() -> List[int]:
         async with db.execute('SELECT user_id FROM users') as cursor:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
+
+async def create_push_message(message_id: str, text: str, lifetime: int) -> bool:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        try:
+            await db.execute(
+                'INSERT INTO push_messages (id, text, lifetime) VALUES (?, ?, ?)',
+                (message_id, text, lifetime)
+            )
+            await db.commit()
+            return True
+        except:
+            return False
+
+async def save_push_recipient(push_id: str, user_id: int, message_id: int):
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        await db.execute(
+            'INSERT INTO push_recipients (push_id, user_id, message_id) VALUES (?, ?, ?)',
+            (push_id, user_id, message_id)
+        )
+        await db.commit()
+
+async def get_push_recipients(push_id: str) -> List[Dict]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute(
+            'SELECT user_id, message_id FROM push_recipients WHERE push_id = ?',
+            (push_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [{'user_id': row[0], 'message_id': row[1]} for row in rows]
+
+async def delete_push_message(message_id: str) -> bool:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        await db.execute(
+            'UPDATE push_messages SET active = 0 WHERE id = ?',
+            (message_id,)
+        )
+        await db.execute(
+            'DELETE FROM push_recipients WHERE push_id = ?',
+            (message_id,)
+        )
+        await db.commit()
+        return True
+
+async def get_push_message(message_id: str) -> Optional[Dict]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute(
+            'SELECT id, text, lifetime, created_at FROM push_messages WHERE id = ? AND active = 1',
+            (message_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'text': row[1],
+                    'lifetime': row[2],
+                    'created_at': row[3]
+                }
+            return None
+
+async def get_active_push_messages() -> List[Dict]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute(
+            'SELECT id, text, lifetime, created_at FROM push_messages WHERE active = 1'
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [{
+                'id': row[0],
+                'text': row[1],
+                'lifetime': row[2],
+                'created_at': row[3]
+            } for row in rows]
+
+async def add_sponsor(link: str) -> int:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute('SELECT MAX(position) FROM sponsors WHERE active = 1') as cursor:
+            row = await cursor.fetchone()
+            next_position = (row[0] + 1) if row and row[0] else 1
+        
+        cursor = await db.execute(
+            'INSERT INTO sponsors (link, position) VALUES (?, ?)',
+            (link, next_position)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_active_sponsors() -> List[Dict]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute(
+            'SELECT id, link, position FROM sponsors WHERE active = 1 ORDER BY position'
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [{
+                'id': row[0],
+                'link': row[1],
+                'position': row[2]
+            } for row in rows]
+
+async def delete_sponsor(sponsor_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        await db.execute(
+            'UPDATE sponsors SET active = 0 WHERE id = ?',
+            (sponsor_id,)
+        )
+        
+        sponsors = await get_active_sponsors()
+        for idx, sponsor in enumerate(sponsors, 1):
+            await db.execute(
+                'UPDATE sponsors SET position = ? WHERE id = ?',
+                (idx, sponsor['id'])
+            )
+        
+        await db.commit()
+        return True
+
+async def delete_all_sponsors() -> bool:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        await db.execute('UPDATE sponsors SET active = 0')
+        await db.commit()
+        return True
+
+async def store_user_subscription_check(user_id: int, checked_sponsors: str):
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        await db.execute(
+            'INSERT OR REPLACE INTO users (user_id, username) VALUES (?, (SELECT username FROM users WHERE user_id = ?))',
+            (user_id, user_id)
+        )
+        await db.commit()
+
+async def check_user_subscribed_sponsors(user_id: int) -> bool:
+    return True
+
