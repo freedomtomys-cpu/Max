@@ -97,6 +97,15 @@ async def init_db():
         ''')
         
         await db.execute('''
+            CREATE TABLE IF NOT EXISTS sponsor_checks (
+                user_id INTEGER PRIMARY KEY,
+                checked_sponsors_ids TEXT,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        await db.execute('''
             CREATE TABLE IF NOT EXISTS push_recipients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 push_id TEXT,
@@ -464,11 +473,17 @@ async def delete_all_sponsors() -> bool:
 async def store_user_subscription_check(user_id: int, checked_sponsors: str):
     async with aiosqlite.connect(DATABASE_FILE) as db:
         await db.execute(
-            'INSERT OR REPLACE INTO users (user_id, username) VALUES (?, (SELECT username FROM users WHERE user_id = ?))',
-            (user_id, user_id)
+            'INSERT OR REPLACE INTO sponsor_checks (user_id, checked_sponsors_ids, checked_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+            (user_id, checked_sponsors)
         )
         await db.commit()
 
-async def check_user_subscribed_sponsors(user_id: int) -> bool:
-    return True
+async def check_user_subscribed_sponsors(user_id: int) -> Optional[str]:
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with db.execute(
+            'SELECT checked_sponsors_ids FROM sponsor_checks WHERE user_id = ?',
+            (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
