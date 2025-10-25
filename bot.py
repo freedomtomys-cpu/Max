@@ -1063,10 +1063,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
     
     elif data.startswith('ref_buy_'):
+        print(f"DEBUG: Processing ref_buy_ callback: {data}")
         try:
             ref_info = await ref.get_referral_info(user.id)
+            print(f"DEBUG: ref_info = {ref_info}")
             if not ref_info:
-                await query.answer("❌ Ошибка: аккаунт не найден", show_alert=True)
+                print("DEBUG: No ref_info found")
+                await query.edit_message_text("❌ Ошибка: аккаунт не найден")
                 return
             
             package_map = {
@@ -1077,29 +1080,35 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             
             package = package_map.get(data)
+            print(f"DEBUG: package = {package}")
             if not package:
-                await query.answer("❌ Ошибка: пакет не найден", show_alert=True)
+                await query.edit_message_text("❌ Ошибка: пакет не найден")
                 return
             
             current_balance = ref_info['coins_balance']
+            print(f"DEBUG: current_balance={current_balance}, cost={package['cost']}")
             if current_balance < package['cost']:
-                await query.answer(
-                    f"❌ Недостаточно монет!\n\n"
+                print("DEBUG: Not enough coins")
+                await query.edit_message_text(
+                    f"❌ *Недостаточно монет!*\n\n"
                     f"Нужно: {package['cost']} монет\n"
                     f"У вас: {current_balance} монет\n"
-                    f"Не хватает: {package['cost'] - current_balance} монет",
-                    show_alert=True
+                    f"Не хватает: {package['cost'] - current_balance} монет\n\n"
+                    f"Продолжай приглашать друзей и зарабатывай монеты! 💰",
+                    parse_mode=ParseMode.MARKDOWN
                 )
                 return
             
+            print("DEBUG: Attempting to spend coins")
             success = await ref.spend_coins(user.id, package['cost'], f"Покупка {package['name']}")
+            print(f"DEBUG: spend_coins result = {success}")
             if success:
+                print("DEBUG: Adding subscriptions")
                 for feature in package['features']:
                     await db.add_subscription(user.id, [feature], package['days'])
                 
-                await query.answer(f"✅ {package['name']} активирован!", show_alert=True)
-                
                 new_balance = current_balance - package['cost']
+                print(f"DEBUG: Purchase successful, new_balance = {new_balance}")
                 await query.edit_message_text(
                     f"🎉 *Поздравляем!*\n\n"
                     f"Ты успешно приобрел *{package['name']}* за {package['cost']} монет!\n\n"
@@ -1109,10 +1118,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                await query.answer("❌ Ошибка при списании монет. Попробуйте снова.", show_alert=True)
+                print("DEBUG: Failed to spend coins")
+                await query.edit_message_text("❌ Ошибка при списании монет. Попробуйте снова.")
         except Exception as e:
-            print(f"Error in ref_buy handler: {e}")
-            await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+            print(f"ERROR in ref_buy handler: {e}")
+            import traceback
+            traceback.print_exc()
+            await query.edit_message_text("❌ Произошла ошибка. Попробуйте позже.")
     
     elif data == 'show_packages':
         keyboard = [
@@ -1586,4 +1598,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
