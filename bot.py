@@ -255,11 +255,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'push_lifetime'
         await update.message.reply_text(
             "✅ Текст сохранен!\n\n"
-            "Теперь укажи время жизни сообщения:\n"
-            "• `ever` - не удалять\n"
-            "• `24 часа`\n"
-            "• `4 часа 6 минут 9 секунд`\n"
-            "• `1 час 10 минут`",
+            "Теперь укажи время жизни сообщения в формате `ЧЧ:ММ`:\n\n"
+            "*Примеры:*\n"
+            "• `ever` - не удалять никогда\n"
+            "• `00:05` - 5 минут\n"
+            "• `01:30` - 1 час 30 минут\n"
+            "• `24:00` - 24 часа\n"
+            "• `48:30` - 48 часов 30 минут\n"
+            "• `73:00` - 73 часа",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -276,20 +279,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if lifetime_str == 'ever':
                     lifetime = -1
                 else:
-                    import re
-                    hours = re.search(r'(\d+)\s*час', lifetime_str)
-                    minutes = re.search(r'(\d+)\s*минут', lifetime_str)
-                    seconds = re.search(r'(\d+)\s*секунд', lifetime_str)
-                    
-                    total_seconds = 0
-                    if hours:
-                        total_seconds += int(hours.group(1)) * 3600
-                    if minutes:
-                        total_seconds += int(minutes.group(1)) * 60
-                    if seconds:
-                        total_seconds += int(seconds.group(1))
-                    
-                    lifetime = total_seconds if total_seconds > 0 else 3600
+                    if ':' in lifetime_str:
+                        try:
+                            parts = lifetime_str.split(':')
+                            if len(parts) == 2:
+                                hours = int(parts[0])
+                                minutes = int(parts[1])
+                                lifetime = hours * 3600 + minutes * 60
+                            else:
+                                await update.message.reply_text(
+                                    "❌ Неверный формат!\n\n"
+                                    "Используй формат `ЧЧ:ММ` (например: `24:30` или `00:05`)\n"
+                                    "Или `ever` для постоянного сообщения",
+                                    parse_mode=ParseMode.MARKDOWN
+                                )
+                                return
+                        except ValueError:
+                            await update.message.reply_text(
+                                "❌ Неверный формат!\n\n"
+                                "Используй формат `ЧЧ:ММ` (например: `24:30` или `00:05`)\n"
+                                "Или `ever` для постоянного сообщения",
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                            return
+                    else:
+                        await update.message.reply_text(
+                            "❌ Неверный формат!\n\n"
+                            "Используй формат `ЧЧ:ММ` (например: `24:30` или `00:05`)\n"
+                            "Или `ever` для постоянного сообщения",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        return
                 
                 message_id = str(uuid.uuid4())[:8]
                 await db.create_push_message(message_id, push_text, lifetime)
@@ -1043,39 +1063,56 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
     
     elif data.startswith('ref_buy_'):
-        ref_info = await ref.get_referral_info(user.id)
-        if not ref_info:
-            await query.answer("Ошибка: аккаунт не найден", show_alert=True)
-            return
-        
-        package_map = {
-            'ref_buy_full_year': {'name': 'Полный пакет на год', 'cost': 17599, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 365},
-            'ref_buy_full_month': {'name': 'Полный пакет на месяц', 'cost': 2600, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 30},
-            'ref_buy_4k_unlimited': {'name': '4K + Безлимит', 'cost': 1800, 'features': ['4k', 'unlimited'], 'days': 30},
-            'ref_buy_mass': {'name': 'Массовая загрузка', 'cost': 360, 'features': ['mass_download'], 'days': 30},
-        }
-        
-        package = package_map.get(data)
-        if not package:
-            await query.answer("Ошибка: пакет не найден", show_alert=True)
-            return
-        
-        if ref_info['coins_balance'] < package['cost']:
-            await query.answer(f"❌ Недостаточно монет! Нужно {package['cost']}, у вас {ref_info['coins_balance']}", show_alert=True)
-            return
-        
-        success = await ref.spend_coins(user.id, package['cost'], f"Покупка {package['name']}")
-        if success:
-            await db.add_subscription(user.id, package['features'], package['days'])
-            await query.answer(f"✅ {package['name']} активирован!", show_alert=True)
-            await query.edit_message_text(
-                f"🎉 *Поздравляем!*\n\n"
-                f"Ты успешно приобрел *{package['name']}* за {package['cost']} монет!\n\n"
-                f"Функция активирована и готова к использованию! ⚡",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            await query.answer("❌ Ошибка при покупке. Попробуйте снова.", show_alert=True)
+        try:
+            ref_info = await ref.get_referral_info(user.id)
+            if not ref_info:
+                await query.answer("❌ Ошибка: аккаунт не найден", show_alert=True)
+                return
+            
+            package_map = {
+                'ref_buy_full_year': {'name': 'Полный пакет на год', 'cost': 17599, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 365},
+                'ref_buy_full_month': {'name': 'Полный пакет на месяц', 'cost': 2600, 'features': ['4k', 'unlimited', 'mass_download'], 'days': 30},
+                'ref_buy_4k_unlimited': {'name': '4K + Безлимит', 'cost': 1800, 'features': ['4k', 'unlimited'], 'days': 30},
+                'ref_buy_mass': {'name': 'Массовая загрузка', 'cost': 360, 'features': ['mass_download'], 'days': 30},
+            }
+            
+            package = package_map.get(data)
+            if not package:
+                await query.answer("❌ Ошибка: пакет не найден", show_alert=True)
+                return
+            
+            current_balance = ref_info['coins_balance']
+            if current_balance < package['cost']:
+                await query.answer(
+                    f"❌ Недостаточно монет!\n\n"
+                    f"Нужно: {package['cost']} монет\n"
+                    f"У вас: {current_balance} монет\n"
+                    f"Не хватает: {package['cost'] - current_balance} монет",
+                    show_alert=True
+                )
+                return
+            
+            success = await ref.spend_coins(user.id, package['cost'], f"Покупка {package['name']}")
+            if success:
+                for feature in package['features']:
+                    await db.add_subscription(user.id, [feature], package['days'])
+                
+                await query.answer(f"✅ {package['name']} активирован!", show_alert=True)
+                
+                new_balance = current_balance - package['cost']
+                await query.edit_message_text(
+                    f"🎉 *Поздравляем!*\n\n"
+                    f"Ты успешно приобрел *{package['name']}* за {package['cost']} монет!\n\n"
+                    f"💰 Новый баланс: {new_balance} монет\n\n"
+                    f"Функция активирована и готова к использованию! ⚡\n\n"
+                    f"Чтобы вернуться в главное меню, используй /start",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await query.answer("❌ Ошибка при списании монет. Попробуйте снова.", show_alert=True)
+        except Exception as e:
+            print(f"Error in ref_buy handler: {e}")
+            await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
     
     elif data == 'show_packages':
         keyboard = [
