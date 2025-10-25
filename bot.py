@@ -241,27 +241,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    if text.startswith('push:') and user.id in ADMIN_IDS:
+        push_text = text[5:].strip()
+        if not push_text:
+            await update.message.reply_text(
+                "❌ Текст сообщения не может быть пустым!\n\n"
+                "Используй формат: `push:текст сообщения`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        context.user_data['push_text'] = push_text
+        context.user_data['admin_action'] = 'push_lifetime'
+        await update.message.reply_text(
+            "✅ Текст сохранен!\n\n"
+            "Теперь укажи время жизни сообщения:\n"
+            "• `ever` - не удалять\n"
+            "• `24 часа`\n"
+            "• `4 часа 6 минут 9 секунд`\n"
+            "• `1 час 10 минут`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     if user.id in ADMIN_IDS and 'admin_action' in context.user_data:
         action = context.user_data.pop('admin_action')
         parts = text.strip().split()
         
         try:
-            if action == 'send_push':
-                if 'push_text' not in context.user_data:
-                    context.user_data['push_text'] = text
-                    context.user_data['admin_action'] = 'push_lifetime'
-                    await update.message.reply_text(
-                        "✅ Текст сохранен!\n\n"
-                        "Теперь укажи время жизни сообщения:\n"
-                        "• `ever` - не удалять\n"
-                        "• `24 часа`\n"
-                        "• `4 часа 6 минут 9 секунд`\n"
-                        "• `1 час 10 минут`",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return
-            
-            elif action == 'push_lifetime':
+            if action == 'push_lifetime':
                 push_text = context.user_data.pop('push_text', '')
                 lifetime_str = text.strip().lower()
                 
@@ -340,38 +348,72 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("❌ Push уведомление не найдено или уже удалено")
                 return
             
-            elif action == 'add_sponsors_count':
-                sponsor_count = int(text.strip())
-                context.user_data['sponsor_count'] = sponsor_count
-                context.user_data['sponsor_links'] = []
-                context.user_data['admin_action'] = 'add_sponsor_link'
-                await update.message.reply_text(
-                    f"📝 Отправь ссылку для спонсора №1 из {sponsor_count}:"
-                )
+            elif action == 'add_sponsors':
+                text_input = text.strip()
+                
+                if text_input.startswith('S:'):
+                    try:
+                        sponsor_count = int(text_input[2:].strip())
+                        context.user_data['sponsor_count'] = sponsor_count
+                        context.user_data['sponsor_links'] = []
+                        context.user_data['admin_action'] = 'add_sponsor_link'
+                        await update.message.reply_text(
+                            f"📝 Отправь ссылку для спонсора №1 из {sponsor_count} в формате:\n"
+                            f"`W:ссылка_на_канал`"
+                        )
+                    except ValueError:
+                        await update.message.reply_text(
+                            "❌ Неверный формат!\n\n"
+                            "Используй: `S:число` (например, S:3)",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                else:
+                    await update.message.reply_text(
+                        "❌ Неверный формат!\n\n"
+                        "Используй: `S:число` для указания количества спонсоров\n"
+                        "Например: `S:3`",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
                 return
             
             elif action == 'add_sponsor_link':
-                link = text.strip()
-                context.user_data['sponsor_links'].append(link)
-                current = len(context.user_data['sponsor_links'])
-                total = context.user_data['sponsor_count']
+                text_input = text.strip()
                 
-                if current < total:
-                    context.user_data['admin_action'] = 'add_sponsor_link'
-                    await update.message.reply_text(
-                        f"📝 Отправь ссылку для спонсора №{current + 1} из {total}:"
-                    )
-                    return
+                if text_input.startswith('W:'):
+                    link = text_input[2:].strip()
+                    if not link:
+                        await update.message.reply_text("❌ Ссылка не может быть пустой!")
+                        return
+                    
+                    context.user_data['sponsor_links'].append(link)
+                    current = len(context.user_data['sponsor_links'])
+                    total = context.user_data['sponsor_count']
+                    
+                    if current < total:
+                        context.user_data['admin_action'] = 'add_sponsor_link'
+                        await update.message.reply_text(
+                            f"📝 Отправь ссылку для спонсора №{current + 1} из {total} в формате:\n"
+                            f"`W:ссылка_на_канал`"
+                        )
+                        return
+                    else:
+                        for link in context.user_data['sponsor_links']:
+                            await db.add_sponsor(link)
+                        
+                        context.user_data.pop('sponsor_count', None)
+                        context.user_data.pop('sponsor_links', None)
+                        
+                        await update.message.reply_text(
+                            f"✅ Добавлено {total} спонсоров!\n\n"
+                            "Теперь пользователи будут видеть кнопки подписки перед скачиванием."
+                        )
+                        return
                 else:
-                    for link in context.user_data['sponsor_links']:
-                        await db.add_sponsor(link)
-                    
-                    context.user_data.pop('sponsor_count', None)
-                    context.user_data.pop('sponsor_links', None)
-                    
                     await update.message.reply_text(
-                        f"✅ Добавлено {total} спонсоров!\n\n"
-                        "Теперь пользователи будут видеть кнопки подписки перед скачиванием."
+                        "❌ Неверный формат!\n\n"
+                        "Используй: `W:ссылка` для указания ссылки на канал\n"
+                        "Например: `W:https://t.me/channel`",
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     return
             
@@ -412,6 +454,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_info = await db.get_user_info(target_id)
                 if user_info:
                     subs = await db.get_user_subscriptions(target_id)
+                    ref_info = await ref.get_referral_info(target_id)
                     blocked_status = "🚫 Заблокирован" if user_info['is_blocked'] else "✅ Активен"
                     username = f"@{user_info['username']}" if user_info['username'] else "Не указан"
                     
@@ -420,6 +463,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     info_text += f"Ник: {escape_markdown(username)}\n"
                     info_text += f"Статус: {blocked_status}\n"
                     info_text += f"Первое посещение: {user_info['first_seen']}\n\n"
+                    
+                    if ref_info:
+                        info_text += f"💰 *Баланс монет:* {ref_info['coins_balance']}\n"
+                        info_text += f"👥 *Рефералов:* {ref_info['total_referrals']}\n\n"
                     
                     if subs:
                         info_text += "*Активные подписки:*\n"
@@ -1210,10 +1257,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == 'admin_send_push':
             await query.edit_message_text(
                 "📢 *Отправить Push уведомление*\n\n"
-                "Отправь текст сообщения:",
+                "Отправь сообщение в формате:\n"
+                "`push:текст вашего сообщения`\n\n"
+                "Пример:\n"
+                "`push:Новое обновление бота! Добавлена поддержка 4K видео`",
                 parse_mode=ParseMode.MARKDOWN
             )
-            context.user_data['admin_action'] = 'send_push'
         elif data == 'admin_delete_push':
             await query.edit_message_text(
                 "🗑 *Удалить Push уведомление*\n\n"
@@ -1224,10 +1273,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'admin_add_sponsors':
             await query.edit_message_text(
                 "👥 *Добавить спонсоров*\n\n"
-                "Отправь количество спонсоров:",
+                "Сначала укажи количество спонсоров в формате:\n"
+                "`S:число`\n\n"
+                "Например: `S:3` для добавления 3 спонсоров",
                 parse_mode=ParseMode.MARKDOWN
             )
-            context.user_data['admin_action'] = 'add_sponsors_count'
+            context.user_data['admin_action'] = 'add_sponsors'
         elif data == 'admin_remove_sponsors':
             await query.edit_message_text(
                 "❌ *Убрать спонсоров*\n\n"
@@ -1390,6 +1441,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_info = await db.get_user_info(target_id)
         if user_info:
             subs = await db.get_user_subscriptions(target_id)
+            ref_info = await ref.get_referral_info(target_id)
             blocked_status = "🚫 Заблокирован" if user_info['is_blocked'] else "✅ Активен"
             username = f"@{user_info['username']}" if user_info['username'] else "Не указан"
             
@@ -1398,6 +1450,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info_text += f"Ник: {escape_markdown(username)}\n"
             info_text += f"Статус: {blocked_status}\n"
             info_text += f"Первое посещение: {user_info['first_seen']}\n\n"
+            
+            if ref_info:
+                info_text += f"💰 *Баланс монет:* {ref_info['coins_balance']}\n"
+                info_text += f"👥 *Рефералов:* {ref_info['total_referrals']}\n\n"
             
             if subs:
                 info_text += "*Активные подписки:*\n"
