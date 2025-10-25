@@ -702,10 +702,10 @@ async def check_sponsors_subscription(update: Update, context: ContextTypes.DEFA
     if not sponsors:
         return True
     
-    checked_key = f'sponsors_checked_{user_id}'
     current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
     
-    if context.user_data.get(checked_key) == current_sponsors_ids:
+    checked_sponsors = await db.check_user_subscribed_sponsors(user_id)
+    if checked_sponsors == current_sponsors_ids:
         return True
     
     keyboard = []
@@ -882,11 +882,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data.startswith('check_sponsor_'):
         user_id_str = data.replace('check_sponsor_', '')
+        user_id_int = int(user_id_str)
         sponsors = await db.get_active_sponsors()
         current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
         
-        checked_key = f'sponsors_checked_{user_id_str}'
-        context.user_data[checked_key] = current_sponsors_ids
+        await db.store_user_subscription_check(user_id_int, current_sponsors_ids)
         
         await query.answer("✅ Проверка пройдена! Теперь можешь скачивать видео", show_alert=True)
         try:
