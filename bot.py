@@ -880,13 +880,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text("Ошибка создания платежа. Попробуйте позже.")
     
+    elif data.startswith('check_sponsor_'):
+        user_id_str = data.replace('check_sponsor_', '')
+        sponsors = await db.get_active_sponsors()
+        current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
+        
+        checked_key = f'sponsors_checked_{user_id_str}'
+        context.user_data[checked_key] = current_sponsors_ids
+        
+        await query.answer("✅ Проверка пройдена! Теперь можешь скачивать видео", show_alert=True)
+        try:
+            await query.message.delete()
+        except:
+            pass
+    
     elif data.startswith('check_'):
         payment_id = data.replace('check_', '')
         payment_info = payments.check_payment_status(payment_id)
         status = payment_info['status']
         paid = payment_info['paid']
-        
-        await query.answer()
         
         if status == 'succeeded' and paid:
             payment_data = await db.get_payment(payment_id)
@@ -944,20 +956,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == 'need_4k':
         await query.answer("⚠️ 4K доступно только с подпиской!\n\nПодключи пакет 💎4K или Full в разделе Plus+", show_alert=True)
-    
-    elif data.startswith('check_sponsor_'):
-        user_id_str = data.replace('check_sponsor_', '')
-        sponsors = await db.get_active_sponsors()
-        current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
-        
-        checked_key = f'sponsors_checked_{user_id_str}'
-        context.user_data[checked_key] = current_sponsors_ids
-        
-        await query.answer("✅ Проверка пройдена! Теперь можешь скачивать видео", show_alert=True)
-        try:
-            await query.message.delete()
-        except:
-            pass
     
     elif data.startswith('mass_quality_'):
         quality_type = data.replace('mass_quality_', '')
@@ -1029,11 +1027,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "Выбери награду 👇"
             
             keyboard = [
-                [InlineKeyboardButton("1. Полный пакет на год — 17 599 монет", callback_data="ref_buy_full_year")],
-                [InlineKeyboardButton("2. Полный пакет на месяц — 2 600 монет", callback_data="ref_buy_full_month")],
-                [InlineKeyboardButton("3. 4K + Безлимит — 1 800 монет", callback_data="ref_buy_4k_unlimited")],
-                [InlineKeyboardButton("4. Массовая загрузка — 360 монет", callback_data="ref_buy_mass")],
-                [InlineKeyboardButton("5. Как приглашать друзей", callback_data="ref_how_to")],
+                [InlineKeyboardButton("💎 Полный пакет на год — 17 599 монет", callback_data="ref_buy_full_year")],
+                [InlineKeyboardButton("💎 Полный пакет на месяц — 2 600 монет", callback_data="ref_buy_full_month")],
+                [InlineKeyboardButton("🎬 4K + Безлимит — 1 800 монет", callback_data="ref_buy_4k_unlimited")],
+                [InlineKeyboardButton("📦 Массовая загрузка — 360 монет", callback_data="ref_buy_mass")],
+                [InlineKeyboardButton("💡 Как приглашать друзей", callback_data="ref_how_to")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
