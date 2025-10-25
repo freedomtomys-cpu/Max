@@ -91,14 +91,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Скачивание аудио в MP3\n\n" \
         "📲 *Просто отправь ссылку* — и получишь готовый файл!"
     
-    if referred_by:
-        welcome_text += "\n\n🎁 *Ты получил 10 монет* за регистрацию по реферальной ссылке!"
-    
     await update.message.reply_text(
         welcome_text,
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN
     )
+    
+    if referred_by:
+        await update.message.reply_text(
+            "🎉 *Поздравляем!*\n\n"
+            "🎁 Тебе начислено *10 монет* за регистрацию по реферальной ссылке!\n\n"
+            "💰 Зарабатывай ещё больше монет:\n"
+            "• Приглашай друзей — *+20 монет*\n"
+            "• Скачивай видео — *+1 монета*\n\n"
+            "Используй монеты для получения премиум функций бесплатно! ⚡",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1596,3 +1604,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
