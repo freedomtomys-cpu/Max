@@ -30,9 +30,33 @@ async def delete_message_later(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     except:
         pass
 
+async def delete_push_after_timeout(context: ContextTypes.DEFAULT_TYPE, message_id: str, timeout: int):
+    await asyncio.sleep(timeout)
+    
+    recipients = await db.get_push_recipients(message_id)
+    for recipient in recipients:
+        try:
+            await context.bot.delete_message(
+                chat_id=recipient['user_id'],
+                message_id=recipient['message_id']
+            )
+        except:
+            pass
+    
+    await db.delete_push_message(message_id)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.add_user(user.id, user.username)
+    
+    if await db.is_user_blocked(user.id):
+        await update.message.reply_text(
+            "🚫 *Доступ заблокирован*\n\n"
+            "Вы были заблокированы администратором.\n"
+            "Для получения информации обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
     
     referred_by = None
     if context.args and len(context.args) > 0:
@@ -44,9 +68,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 referred_by = referrer_id
     
     await ref.create_referral_account(user.id, referred_by)
-    
-    if await db.is_user_blocked(user.id):
-        return
     
     if user.id in ADMIN_IDS:
         keyboard = [
@@ -84,6 +105,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
     if await db.is_user_blocked(user.id):
+        await update.message.reply_text(
+            "🚫 *Доступ заблокирован*",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     if text in ['📌 Pinterest', '🎵 TikTok']:
@@ -210,6 +235,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
     if await db.is_user_blocked(user.id):
+        await update.message.reply_text(
+            "🚫 *Доступ заблокирован*",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     if user.id in ADMIN_IDS and 'admin_action' in context.user_data:
@@ -217,7 +246,168 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = text.strip().split()
         
         try:
-            if action == 'user_info' and len(parts) >= 1:
+            if action == 'send_push':
+                if 'push_text' not in context.user_data:
+                    context.user_data['push_text'] = text
+                    context.user_data['admin_action'] = 'push_lifetime'
+                    await update.message.reply_text(
+                        "✅ Текст сохранен!\n\n"
+                        "Теперь укажи время жизни сообщения:\n"
+                        "• `ever` - не удалять\n"
+                        "• `24 часа`\n"
+                        "• `4 часа 6 минут 9 секунд`\n"
+                        "• `1 час 10 минут`",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    return
+            
+            elif action == 'push_lifetime':
+                push_text = context.user_data.pop('push_text', '')
+                lifetime_str = text.strip().lower()
+                
+                if lifetime_str == 'ever':
+                    lifetime = -1
+                else:
+                    import re
+                    hours = re.search(r'(\d+)\s*час', lifetime_str)
+                    minutes = re.search(r'(\d+)\s*минут', lifetime_str)
+                    seconds = re.search(r'(\d+)\s*секунд', lifetime_str)
+                    
+                    total_seconds = 0
+                    if hours:
+                        total_seconds += int(hours.group(1)) * 3600
+                    if minutes:
+                        total_seconds += int(minutes.group(1)) * 60
+                    if seconds:
+                        total_seconds += int(seconds.group(1))
+                    
+                    lifetime = total_seconds if total_seconds > 0 else 3600
+                
+                message_id = str(uuid.uuid4())[:8]
+                await db.create_push_message(message_id, push_text, lifetime)
+                
+                user_ids = await db.get_all_user_ids()
+                sent_count = 0
+                for uid in user_ids:
+                    try:
+                        msg = await context.bot.send_message(
+                            chat_id=uid,
+                            text=push_text,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        await db.save_push_recipient(message_id, uid, msg.message_id)
+                        sent_count += 1
+                        if sent_count % 30 == 0:
+                            await asyncio.sleep(1)
+                    except:
+                        pass
+                
+                await update.message.reply_text(
+                    f"✅ Push отправлен!\n\n"
+                    f"📊 Отправлено: {sent_count} пользователям\n"
+                    f"🆔 ID сообщения: `{message_id}`\n\n"
+                    f"Используй этот ID для удаления сообщения",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+                if lifetime > 0:
+                    asyncio.create_task(delete_push_after_timeout(context, message_id, lifetime))
+                return
+            
+            elif action == 'delete_push':
+                message_id = text.strip()
+                push_msg = await db.get_push_message(message_id)
+                if push_msg:
+                    recipients = await db.get_push_recipients(message_id)
+                    deleted_count = 0
+                    for recipient in recipients:
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=recipient['user_id'],
+                                message_id=recipient['message_id']
+                            )
+                            deleted_count += 1
+                        except:
+                            pass
+                    
+                    await db.delete_push_message(message_id)
+                    await update.message.reply_text(
+                        f"✅ Push уведомление `{message_id}` удалено\n"
+                        f"Удалено сообщений: {deleted_count}",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                else:
+                    await update.message.reply_text("❌ Push уведомление не найдено или уже удалено")
+                return
+            
+            elif action == 'add_sponsors_count':
+                sponsor_count = int(text.strip())
+                context.user_data['sponsor_count'] = sponsor_count
+                context.user_data['sponsor_links'] = []
+                context.user_data['admin_action'] = 'add_sponsor_link'
+                await update.message.reply_text(
+                    f"📝 Отправь ссылку для спонсора №1 из {sponsor_count}:"
+                )
+                return
+            
+            elif action == 'add_sponsor_link':
+                link = text.strip()
+                context.user_data['sponsor_links'].append(link)
+                current = len(context.user_data['sponsor_links'])
+                total = context.user_data['sponsor_count']
+                
+                if current < total:
+                    context.user_data['admin_action'] = 'add_sponsor_link'
+                    await update.message.reply_text(
+                        f"📝 Отправь ссылку для спонсора №{current + 1} из {total}:"
+                    )
+                    return
+                else:
+                    for link in context.user_data['sponsor_links']:
+                        await db.add_sponsor(link)
+                    
+                    context.user_data.pop('sponsor_count', None)
+                    context.user_data.pop('sponsor_links', None)
+                    
+                    await update.message.reply_text(
+                        f"✅ Добавлено {total} спонсоров!\n\n"
+                        "Теперь пользователи будут видеть кнопки подписки перед скачиванием."
+                    )
+                    return
+            
+            elif action == 'remove_sponsors':
+                choice = text.strip().lower()
+                if choice == 'all':
+                    await db.delete_all_sponsors()
+                    await update.message.reply_text("✅ Все спонсоры удалены")
+                elif choice == 'one':
+                    context.user_data['admin_action'] = 'remove_sponsor_number'
+                    sponsors = await db.get_active_sponsors()
+                    if sponsors:
+                        text_msg = "Текущие спонсоры:\n\n"
+                        for s in sponsors:
+                            text_msg += f"Спонсор №{s['position']}: {s['link']}\n"
+                        text_msg += "\nОтправь номер спонсора для удаления:"
+                        await update.message.reply_text(text_msg)
+                    else:
+                        await update.message.reply_text("❌ Нет активных спонсоров")
+                    return
+                else:
+                    await update.message.reply_text("❌ Используй `all` или `one`", parse_mode=ParseMode.MARKDOWN)
+                return
+            
+            elif action == 'remove_sponsor_number':
+                sponsor_num = int(text.strip())
+                sponsors = await db.get_active_sponsors()
+                sponsor_to_delete = next((s for s in sponsors if s['position'] == sponsor_num), None)
+                if sponsor_to_delete:
+                    await db.delete_sponsor(sponsor_to_delete['id'])
+                    await update.message.reply_text(f"✅ Спонсор №{sponsor_num} удален")
+                else:
+                    await update.message.reply_text(f"❌ Спонсор №{sponsor_num} не найден")
+                return
+            
+            elif action == 'user_info' and len(parts) >= 1:
                 target_id = int(parts[0])
                 user_info = await db.get_user_info(target_id)
                 if user_info:
@@ -261,7 +451,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 package = PACKAGES.get(package_key)
                 
                 if package:
+                    existing_subs = await db.get_user_subscriptions(target_id)
+                    has_features = set()
+                    for sub in existing_subs:
+                        has_features.add(sub['feature'])
+                    
+                    new_features = set(package['features'])
+                    already_has = new_features & has_features
+                    
+                    if already_has:
+                        features_list = ', '.join(already_has)
+                        await update.message.reply_text(
+                            f"ℹ️ У пользователя {target_id} уже есть функции: {features_list}\n\n"
+                            f"Пакет {package['name']} все равно выдан, время продлено."
+                        )
+                    
                     await db.add_subscription(target_id, package['features'], package['duration_days'])
+                    
+                    try:
+                        await context.bot.send_message(
+                            chat_id=target_id,
+                            text=f"🎁 *Поздравляем!*\n\n"
+                                 f"Тебе был выдан пакет *{package['name']}*!\n"
+                                 f"Все функции активированы и готовы к использованию! ⚡",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except:
+                        pass
+                    
                     await update.message.reply_text(f"✅ Пакет {package['name']} выдан пользователю {target_id}")
                 else:
                     await update.message.reply_text("❌ Неизвестный пакет")
@@ -331,37 +548,121 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if len(urls) > 1:
-        status_msg = await update.message.reply_text(
+        keyboard = [
+            [InlineKeyboardButton("🎥 HD качество (720p)", callback_data=f"mass_quality_hd")],
+            [InlineKeyboardButton("📱 Среднее качество (480p)", callback_data=f"mass_quality_medium")],
+            [InlineKeyboardButton("🔽 Низкое качество (360p)", callback_data=f"mass_quality_low")],
+            [InlineKeyboardButton("🎧 Только аудио (MP3)", callback_data=f"mass_quality_audio")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        context.user_data['mass_urls'] = urls
+        
+        await update.message.reply_text(
             f"📦 *Массовая загрузка*\n\n"
-            f"Найдено видео: *{len(urls)}*\n"
-            f"Обработано: 0/{len(urls)}\n\n"
-            f"⏳ Начинаем загрузку...",
+            f"Найдено видео: *{len(urls)}*\n\n"
+            f"Выбери единое качество для всех видео 👇",
+            reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN
         )
-        
-        for idx, url in enumerate(urls, 1):
-            await status_msg.edit_text(
-                f"📦 *Массовая загрузка*\n\n"
-                f"Найдено видео: *{len(urls)}*\n"
-                f"Обработано: {idx}/{len(urls)}\n\n"
-                f"⏳ Загружаю видео {idx}...",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            await process_video_url(update, context, url)
-        
-        await status_msg.edit_text(
-            f"✅ *Массовая загрузка завершена!*\n\n"
-            f"Всего загружено: *{len(urls)} видео*\n\n"
-            f"Все файлы отправлены выше 👆",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        asyncio.create_task(delete_message_later(context, update.effective_chat.id, status_msg.message_id, 30))
     else:
         for url in urls:
             await process_video_url(update, context, url)
 
+async def process_mass_download_video(query, context: ContextTypes.DEFAULT_TYPE, url: str, quality: str):
+    user = query.from_user
+    
+    if not downloader.is_valid_url(url):
+        return
+    
+    info = await downloader.extract_video_info_async(url)
+    if not info:
+        return
+    
+    try:
+        audio_only = quality == 'audio'
+        filename = await downloader.download_video(url, quality if quality != 'audio' else None, audio_only)
+        
+        if filename and os.path.exists(filename):
+            file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+            
+            if file_size_mb > 2000:
+                os.remove(filename)
+                return
+            
+            platform = 'pinterest' if 'pinterest.com' in url or 'pin.it' in url else 'tiktok'
+            await db.add_download(user.id, platform)
+            await ref.process_download_coins(user.id)
+            
+            try:
+                if audio_only:
+                    with open(filename, 'rb') as audio_file:
+                        await query.message.reply_audio(
+                            audio=audio_file,
+                            caption="✅ *Готово!*\n\n🎧 Вот твой аудиофайл",
+                            parse_mode=ParseMode.MARKDOWN,
+                            read_timeout=300,
+                            write_timeout=300
+                        )
+                elif file_size_mb > 50:
+                    await query.message.reply_document(
+                        document=open(filename, 'rb'),
+                        caption=f"✅ *Готово!*\n\n🎬 Видео ({file_size_mb:.1f} MB)",
+                        parse_mode=ParseMode.MARKDOWN,
+                        read_timeout=1800,
+                        write_timeout=1800
+                    )
+                else:
+                    with open(filename, 'rb') as video_file:
+                        await query.message.reply_video(
+                            video=video_file,
+                            caption="✅ *Готово!*",
+                            parse_mode=ParseMode.MARKDOWN,
+                            supports_streaming=True,
+                            read_timeout=300,
+                            write_timeout=300
+                        )
+            except Exception as e:
+                logger.error(f"Ошибка отправки файла: {e}")
+            finally:
+                if os.path.exists(filename):
+                    os.remove(filename)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки: {e}")
+
+async def check_sponsors_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    sponsors = await db.get_active_sponsors()
+    if not sponsors:
+        return True
+    
+    checked_key = f'sponsors_checked_{user_id}'
+    current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
+    
+    if context.user_data.get(checked_key) == current_sponsors_ids:
+        return True
+    
+    keyboard = []
+    for sponsor in sponsors:
+        keyboard.append([InlineKeyboardButton(f"✅ Спонсор №{sponsor['position']}", url=sponsor['link'])])
+    keyboard.append([InlineKeyboardButton("✅ Проверить подписку", callback_data=f"check_sponsor_{user_id}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "📢 *Подпишись на наших спонсоров*\n\n"
+        "Для продолжения скачивания подпишись на каналы и нажми кнопку проверки:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return False
+
 async def process_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
     user = update.effective_user
+    
+    sponsors_ok = await check_sponsors_subscription(update, context, user.id)
+    if not sponsors_ok:
+        return
     
     if not downloader.is_valid_url(url):
         msg = await update.message.reply_text(
@@ -423,10 +724,7 @@ async def process_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         for fmt in info['formats']:
             quality = fmt['quality']
             if '2160' in quality or '4k' in quality.lower():
-                if has_4k:
-                    keyboard.append([InlineKeyboardButton(f"🎥 Видео {quality} 💎", callback_data=f"dl_{quality}_{download_id}")])
-                else:
-                    keyboard.append([InlineKeyboardButton(f"🎥 Видео {quality} 🔒", callback_data=f"need_4k")])
+                keyboard.append([InlineKeyboardButton(f"🎥 Видео {quality} 💎", callback_data=f"dl_{quality}_{download_id}" if has_4k else f"need_4k")])
             else:
                 keyboard.append([InlineKeyboardButton(f"🎥 Видео {quality}", callback_data=f"dl_{quality}_{download_id}")])
         
@@ -473,6 +771,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     
     if await db.is_user_blocked(user.id):
+        await query.answer("🚫 Доступ заблокирован", show_alert=True)
         return
     
     if data.startswith('buy_'):
@@ -577,7 +876,75 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     elif data == 'need_4k':
-        await query.answer("⚠️ 4K доступно только для платных пользователей.\nПодключи пакет 💎4K или Full.", show_alert=True)
+        await query.answer("⚠️ 4K доступно только с подпиской!\n\nПодключи пакет 💎4K или Full в разделе Plus+", show_alert=True)
+    
+    elif data.startswith('check_sponsor_'):
+        user_id_str = data.replace('check_sponsor_', '')
+        sponsors = await db.get_active_sponsors()
+        current_sponsors_ids = '_'.join([str(s['id']) for s in sponsors])
+        
+        checked_key = f'sponsors_checked_{user_id_str}'
+        context.user_data[checked_key] = current_sponsors_ids
+        
+        await query.answer("✅ Проверка пройдена! Теперь можешь скачивать видео", show_alert=True)
+        try:
+            await query.message.delete()
+        except:
+            pass
+    
+    elif data.startswith('mass_quality_'):
+        quality_type = data.replace('mass_quality_', '')
+        urls = context.user_data.get('mass_urls', [])
+        
+        if not urls:
+            await query.answer("❌ Ошибка: список URL не найден", show_alert=True)
+            return
+        
+        quality_map = {
+            'hd': '720p',
+            'medium': '480p',
+            'low': '360p',
+            'audio': 'audio'
+        }
+        
+        selected_quality = quality_map.get(quality_type, 'hd')
+        
+        await query.edit_message_text(
+            f"📦 *Массовая загрузка*\n\n"
+            f"Найдено видео: *{len(urls)}*\n"
+            f"Обработано: 0/{len(urls)}\n\n"
+            f"⏳ Начинаем загрузку...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        status_msg = query.message
+        
+        for idx, url in enumerate(urls, 1):
+            try:
+                await status_msg.edit_text(
+                    f"📦 *Массовая загрузка*\n\n"
+                    f"Найдено видео: *{len(urls)}*\n"
+                    f"Обработано: {idx-1}/{len(urls)}\n\n"
+                    f"⏳ Загружаю видео {idx}...",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except:
+                pass
+            
+            await process_mass_download_video(query, context, url, selected_quality)
+        
+        try:
+            await status_msg.edit_text(
+                f"✅ *Массовая загрузка завершена!*\n\n"
+                f"Всего загружено: *{len(urls)} видео*\n\n"
+                f"Все файлы отправлены выше 👆",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            asyncio.create_task(delete_message_later(context, status_msg.chat_id, status_msg.message_id, 30))
+        except:
+            pass
+        
+        context.user_data.pop('mass_urls', None)
     
     elif data == 'referral_system':
         ref_info = await ref.get_referral_info(user.id)
@@ -595,11 +962,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "Выбери награду 👇"
             
             keyboard = [
-                [InlineKeyboardButton("📦 Полный пакет на год — 17599 монет", callback_data="ref_buy_full_year")],
-                [InlineKeyboardButton("📦 Полный пакет на месяц — 2600 монет", callback_data="ref_buy_full_month")],
-                [InlineKeyboardButton("💎 4K + Безлимит — 1800 монет", callback_data="ref_buy_4k_unlimited")],
-                [InlineKeyboardButton("📥 Массовая загрузка — 360 монет", callback_data="ref_buy_mass")],
-                [InlineKeyboardButton("ℹ️ Как приглашать друзей", callback_data="ref_how_to")],
+                [InlineKeyboardButton("1. Полный пакет на год — 17 599 монет", callback_data="ref_buy_full_year")],
+                [InlineKeyboardButton("2. Полный пакет на месяц — 2 600 монет", callback_data="ref_buy_full_month")],
+                [InlineKeyboardButton("3. 4K + Безлимит — 1 800 монет", callback_data="ref_buy_4k_unlimited")],
+                [InlineKeyboardButton("4. Массовая загрузка — 360 монет", callback_data="ref_buy_mass")],
+                [InlineKeyboardButton("5. Как приглашать друзей", callback_data="ref_how_to")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -840,7 +1207,37 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asyncio.create_task(delete_message_later(context, query.message.chat_id, loading_msg.message_id, 30))
     
     elif data.startswith('admin_') and user.id in ADMIN_IDS:
-        if data == 'admin_stats':
+        if data == 'admin_send_push':
+            await query.edit_message_text(
+                "📢 *Отправить Push уведомление*\n\n"
+                "Отправь текст сообщения:",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            context.user_data['admin_action'] = 'send_push'
+        elif data == 'admin_delete_push':
+            await query.edit_message_text(
+                "🗑 *Удалить Push уведомление*\n\n"
+                "Отправь ID сообщения:",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            context.user_data['admin_action'] = 'delete_push'
+        elif data == 'admin_add_sponsors':
+            await query.edit_message_text(
+                "👥 *Добавить спонсоров*\n\n"
+                "Отправь количество спонсоров:",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            context.user_data['admin_action'] = 'add_sponsors_count'
+        elif data == 'admin_remove_sponsors':
+            await query.edit_message_text(
+                "❌ *Убрать спонсоров*\n\n"
+                "Выбери вариант:\n"
+                "• `all` - удалить всех\n"
+                "• `one` - удалить одного",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            context.user_data['admin_action'] = 'remove_sponsors'
+        elif data == 'admin_stats':
             stats = await db.get_statistics()
             users_count = await db.get_all_users_count()
             active_subs = await db.get_active_subscriptions_count()
@@ -915,6 +1312,10 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("📢 Отправить Push уведомление", callback_data="admin_send_push")],
+        [InlineKeyboardButton("🗑 Удалить Push уведомление", callback_data="admin_delete_push")],
+        [InlineKeyboardButton("👥 Спонсоры", callback_data="admin_add_sponsors")],
+        [InlineKeyboardButton("❌ Убрать спонсоров", callback_data="admin_remove_sponsors")],
         [InlineKeyboardButton("👤 Информация о пользователе", callback_data="admin_user_info")],
         [InlineKeyboardButton("🚫 Заблокировать пользователя", callback_data="admin_block")],
         [InlineKeyboardButton("✅ Разблокировать пользователя", callback_data="admin_unblock")],
@@ -1015,7 +1416,34 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         package = PACKAGES.get(package_key)
         
         if package:
+            existing_subs = await db.get_user_subscriptions(target_id)
+            has_features = set()
+            for sub in existing_subs:
+                has_features.add(sub['feature'])
+            
+            new_features = set(package['features'])
+            already_has = new_features & has_features
+            
+            if already_has:
+                features_list = ', '.join(already_has)
+                await update.message.reply_text(
+                    f"ℹ️ У пользователя {target_id} уже есть функции: {features_list}\n\n"
+                    f"Пакет {package['name']} все равно выдан, время продлено."
+                )
+            
             await db.add_subscription(target_id, package['features'], package['duration_days'])
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text=f"🎁 *Поздравляем!*\n\n"
+                         f"Тебе был выдан пакет *{package['name']}*!\n"
+                         f"Все функции активированы и готовы к использованию! ⚡",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except:
+                pass
+            
             await update.message.reply_text(f"✅ Пакет {package['name']} выдан пользователю {target_id}")
         else:
             await update.message.reply_text("❌ Неизвестный пакет")
@@ -1046,6 +1474,7 @@ async def main():
         
         logger.info("Инициализация базы данных...")
         await db.init_db()
+        await ref.init_referral_tables()
         
         logger.info("Создание приложения Telegram...")
         application = Application.builder().token(TELEGRAM_TOKEN).build()
