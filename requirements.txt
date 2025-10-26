@@ -7,3 +7,4 @@ python-telegram-bot>=22.5
 requests>=2.32.0
 yookassa>=3.7.1
 yt-dlp>=2025.9.26
+asyncpg
